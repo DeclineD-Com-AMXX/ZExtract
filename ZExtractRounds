@@ -1,0 +1,449 @@
+/* Require Semicolons */
+#pragma semicolon 1
+
+
+/* ~(Includes)~ */
+#include <amxmodx>
+#include <amxmisc>
+#include <fakemeta>
+#include <hamsandwich>
+#include <reapi>
+
+#include <zextract_const>
+
+/* ~(Debug)~ */
+//#define DEBUG // Enables Debug
+
+
+/* ~(Frame)~ */
+#define NextFrame RequestFrame( "OnNextFrame" );
+
+
+/* ~(Round)~ */
+#define MaxRoundTime 540
+
+#define PlayersAlive ( ( GetPlayers( TEAM_CT ) ) && ( GetPlayers( TEAM_TERRORIST ) ) )
+
+new const RoundWinMessages[ WinType ][  ] = {
+	"",
+	"Restarting",
+	"No One Won",
+	"Humans Win",
+	"Zombies Win"
+};
+
+
+/* ~(Cvar)~ */
+#define CvarValueMaxLen CI_Value - CI_Name - CI_Id
+
+enum cvarInfo
+{
+	CI_Id,
+	CI_Name[ 50 ],
+	CI_Value[ 50 ],
+	Float: CI_flValue,
+	CI_IntValue
+};
+
+enum _: plgCvars
+{
+	PCV_WFPDelay,
+	PCV_WFPMin,
+	PCV_Rounds,
+	PCV_RoundStartDelay,
+	PCV_RoundEndDelay
+};
+
+new g_iCvars[ plgCvars ][ cvarInfo ] = 
+{
+	{ 0, "ZExtract_WfpDelay", "3.0",  0.0, 0 },
+	{ 0, "ZExtract_WfpMinPlayers", "2", 0.0, 0 },
+	{ 0, "ZExtract_Rounds", "10", 0.0, 0 },
+	{ 0, "ZExtract_RoundStartDelay", "15.0", 0.0, 0 },
+	{ 0, "ZExtract_RoundEndDelay", "5.0", 0.0, 0 }
+};
+
+
+/* ~(Variables)~ */
+new /*==*/ g_MaxRoundTime,
+	/*==*/ g_MaxRounds,
+	/*==*/ g_iRound,
+
+	Float: g_flRoundStartTime,
+	Float: g_flCountNextTime,
+	Float: g_flWFPTime,
+
+	bool: g_bRoundStarted,
+	bool: g_bRoundEnded,
+	bool: g_bWFP,
+
+	RsType: g_rRestart,
+
+	cvarRestart[ 2 ],
+	cvarRoundTime,
+	cvarFreezeTime,
+
+	imTextMsg,
+	imRoundTimer;
+
+
+/* ~(Private Functions)~ */
+RegisterCvars( )
+{
+	for ( new i = 0; i < plgCvars; ++i )
+	{
+		g_iCvars[ i ][ CI_Id ] = register_cvar( g_iCvars[ i ][ CI_Name ], g_iCvars[ i ][ CI_Value ] );
+		bind_pcvar_string( g_iCvars[ i ][ CI_Id ], g_iCvars[ i ][ CI_Value ], CvarValueMaxLen );
+		bind_pcvar_float( g_iCvars[ i ][ CI_Id ], g_iCvars[ i ][ CI_flValue ] );
+		bind_pcvar_num( g_iCvars[ i ][ CI_Id ], g_iCvars[ i ][ CI_IntValue ] );
+	}
+}
+
+CheckRestart( )
+{
+	if ( g_rRestart > Rs_Not )
+		return;
+
+	new cvarStr[ 5 ];
+
+	get_pcvar_string( cvarRestart[ 0 ], cvarStr, charsmax( cvarStr ) );
+
+	if ( contain( cvarStr, "." ) )
+	{
+		if ( get_pcvar_float( cvarRestart[ 0 ] ) > 0.0 )
+		{
+			#if defined DEBUG
+			server_print( "Server Game Restart" );
+			#endif
+			g_rRestart = Rs_All;
+			OnRoundEnd( );
+		}
+	}
+	else {
+		if ( get_pcvar_num( cvarRestart[ 0 ] ) > 0 )
+		{
+			#if defined DEBUG
+			server_print( "Server Game Restart" );
+			#endif
+			g_rRestart = Rs_All;
+			OnRoundEnd( );
+		}
+	}
+
+	get_pcvar_string( cvarRestart[ 1 ], cvarStr, charsmax( cvarStr ) );
+
+	if ( contain( cvarStr, "." ) )
+	{
+		if ( get_pcvar_float( cvarRestart[ 1 ] ) > 0.0 )
+		{
+			#if defined DEBUG
+			server_print( "Server Round Restart" );
+			#endif
+			g_rRestart = Rs_Round;
+			OnRoundEnd( );
+		}
+	}
+	else {
+		if ( get_pcvar_num( cvarRestart[ 1 ] ) > 0 )
+		{
+			#if defined DEBUG
+			server_print( "Server Round Restart" );
+			#endif
+			g_rRestart = Rs_Round;
+			OnRoundEnd( );
+		}
+	}
+}
+
+CheckRoundEnd( Float: flGameTime )
+{
+	static Float: TimePassed;
+	TimePassed = ( flGameTime - g_flRoundStartTime );
+
+	if ( ( 0.0 > ( float( g_MaxRoundTime ) - TimePassed ) ) || !PlayersAlive )
+	{
+		OnRoundEnd( );
+	}
+
+	#if defined DEBUG
+	server_print( "CheckRoundEnd Works: PlayersAlive:%i", PlayersAlive);
+	#endif
+}
+
+CheckWFP( )
+{
+	static PlayersOn; PlayersOn = get_playersnum( );
+	static Float: flGameTime; flGameTime = get_gametime( );
+
+	if ( !g_bWFP && PlayersOn >= g_iCvars[ PCV_WFPMin ][ CI_IntValue ] )
+	{
+		return;
+	}
+
+	if ( PlayersOn < g_iCvars[ PCV_WFPMin ][ CI_IntValue ] && !g_bWFP )
+	{
+		g_bWFP = true;
+		g_bRoundEnded = true;
+	}
+
+	if ( g_bWFP && PlayersOn >= g_iCvars[ PCV_WFPMin ][ CI_IntValue ] )
+	{
+		if ( g_flRoundStartTime > g_flWFPTime )
+			g_flWFPTime = flGameTime;
+
+		if ( flGameTime > g_flWFPTime + g_iCvars[ PCV_WFPDelay ][ CI_flValue ] )
+		{
+			g_bWFP = false;
+			OnRoundEnd( );
+		}
+	}
+
+	#if defined DEBUG
+	server_print( "WaitForPlayers: Players: %i, Required: %i, Waiting: %i, Passed Delay: %i, Delay: %.2f", PlayersOn, g_iCvars[ PCV_WFPMin ][ CI_IntValue ], g_bWFP, flGameTime > g_flWFPTime + g_iCvars[ PCV_WFPDelay ][ CI_flValue ], g_iCvars[ PCV_WFPDelay ][ CI_flValue ] );
+	#endif
+}
+
+Count( Float: flGameTime )
+{
+	static Float: TimePassed;
+	TimePassed = ( flGameTime - g_flRoundStartTime ) - 1.0;
+
+	static Float: StartDelay;
+	StartDelay = g_iCvars[ PCV_RoundStartDelay ][ CI_flValue ];
+
+	if ( TimePassed > StartDelay )
+	{
+		OnRoundStart( );
+	}
+	else if ( g_flCountNextTime < flGameTime )
+	{
+		g_flCountNextTime += 1.0;
+
+		PrintCenter( _, "Game Starting in %i..", floatround( StartDelay - TimePassed ) );
+	}
+}
+
+/* ~(plugin_* Functions)~ */
+public plugin_init()
+{
+	/* Register to AMXX PLugin's List */
+	register_plugin( "ZExtract: Rounds", "v1.0", "DeclineD" );
+
+	/* Handle "Round Start/End" */
+	register_event( "HLTV", "OnRoundStart2", "a", "1=0", "2=0" );
+	RegisterHookChain( RG_RoundEnd, "OnRoundEnd2" );
+
+	/* Handle "Map Change" */
+	RegisterHookChain( RG_CSGameRules_GoToIntermission, "ReHook_ChangeMap" );
+
+	/* Register plugin cvars */
+	RegisterCvars( );
+
+	/* Get Pointer of Game Cvars */
+	cvarRestart[ 0 ] = get_cvar_pointer( "sv_restart" );
+	cvarRestart[ 1 ] = get_cvar_pointer( "sv_restartround" );
+	cvarRoundTime = get_cvar_pointer( "mp_roundtime" );
+	cvarFreezeTime = get_cvar_pointer( "mp_freezetime" );
+
+	/* Get Required MsgIds for the plugin */
+	imTextMsg = get_user_msgid( "TextMsg" );
+	imRoundTimer = get_user_msgid( "RoundTime" );
+
+	/* Rounds */
+	g_MaxRounds = get_pcvar_num( g_iCvars[ PCV_Rounds ][ CI_Id ] );
+	g_flRoundStartTime = get_gametime( );
+
+	/* Have a check function on every frame */
+	NextFrame
+}
+
+public plugin_precache( )
+{
+	
+}
+
+public plugin_natives( )
+{
+	
+}
+
+
+/* ~(Public Functions)~ */
+// [ Round ]
+public OnRoundStart( )
+{
+	g_bRoundStarted = true;
+}
+
+public OnRoundStart2( )
+{
+	if ( !( g_rRestart > Rs_Not ) || !g_bWFP )
+	{
+		++g_iRound;
+	}
+
+	g_rRestart = Rs_Not;
+	g_bRoundEnded = false;
+	g_bRoundStarted = false;
+
+	g_MaxRoundTime = GetRoundTime( );
+
+	g_flRoundStartTime = get_gametime( );
+	g_flCountNextTime = g_flRoundStartTime + 1.0;
+
+	SetRoundTimer( );
+
+	#if defined DEBUG
+	server_print( "Server Round Started" );
+	#endif
+}
+
+public OnRoundEnd( )
+{
+	if ( g_bWFP )
+		return;
+
+	#if defined DEBUG
+	server_print( "Server Round Ending" );
+	#endif
+
+	static Float: TimePassed;
+	TimePassed = ( get_gametime() - g_flRoundStartTime + 1.0 );
+
+	g_bRoundEnded = true;
+
+	new WinType: iWin, WinStatus: fWin, ScenarioEventEndRound: WinEvent;
+
+	if ( g_rRestart > Rs_Not )
+	{
+		iWin = WIN_RESTART;
+		fWin = WINSTATUS_NONE;
+		WinEvent = ROUND_GAME_RESTART;
+
+		set_pcvar_num(cvarRestart[ 0 ], 0);
+		set_pcvar_num(cvarRestart[ 1 ], 0);
+	}
+	else if ( ( 0.0 > ( float( g_MaxRoundTime ) - TimePassed ) ) )
+	{
+		iWin = WIN_DRAW;
+		fWin = WINSTATUS_DRAW;
+		WinEvent = ROUND_END_DRAW;
+
+	}
+	else if ( GetPlayers( TEAM_CT ) == 0 )
+	{
+		iWin = WIN_ZOMBIE;
+		fWin = WINSTATUS_TERRORISTS;
+		WinEvent = ROUND_TERRORISTS_WIN;
+	}
+	else if ( GetPlayers( TEAM_TERRORIST ) == 0 )
+	{
+		iWin = WIN_HUMAN;
+		fWin = WINSTATUS_CTS;
+		WinEvent = ROUND_CTS_WIN;
+	}
+
+	rg_round_end(g_iCvars[ PCV_RoundEndDelay ][ CI_flValue ], fWin, WinEvent, RoundWinMessages[ iWin ], "");
+}
+
+public OnRoundEnd2( WinStatus: status, ScenarioEventEndRound: event, Float: tmDelay )
+{
+	SetHookChainReturn(ATYPE_BOOL, false);
+	return HC_SUPERCEDE;
+}
+
+// [ Checks ]
+public OnNextFrame( )
+{
+	static Float: flGameTime; 
+	flGameTime = get_gametime( );
+
+	// Resume game if not waiting for players
+	if ( !g_bWFP )
+	{
+		// Functions that will be called in pre-game
+		if ( !g_bRoundStarted && !g_bRoundEnded )
+		{
+			Count( flGameTime );
+		}
+		// Functions that will be called in game
+		else if ( !g_bRoundEnded )
+		{
+			CheckRoundEnd( flGameTime );
+		}
+		// Functions that will be called in post-game
+		else
+		{
+
+		}
+	}
+
+	/* Functions that will be called anyway */
+	CheckRestart( );
+	CheckWFP( );
+
+	/* Keep calling the next frame */
+	NextFrame
+}
+
+
+/* ~(Map Change)~ */
+public ReHook_ChangeMap( )
+{
+	return HC_SUPERCEDE;
+}
+
+
+/* ~(Stock Functions)~ */
+stock GetRoundTime( )
+{
+	new rTime[5], fTime[5];
+	get_pcvar_string(cvarRoundTime, rTime, charsmax(rTime));
+	get_pcvar_string(cvarFreezeTime, fTime, charsmax(fTime));
+
+	new iRTime = floatround( ( contain( rTime, "." ) ? str_to_float( rTime ) : float( str_to_num( rTime ) ) ) * 60.0 );
+	new iFTime = ( contain( fTime, "." ) ? floatround( str_to_float( fTime ) ) : str_to_num( fTime ) );
+
+	if ( iRTime > MaxRoundTime )
+		iRTime = MaxRoundTime;
+
+	iRTime += iFTime;
+
+	return iRTime;
+}
+
+stock SetRoundTimer( )
+{
+	message_begin( MSG_BROADCAST, imRoundTimer );
+	write_short( g_MaxRoundTime );
+	message_end( );
+}
+
+stock GetPlayers( TeamName: Team )
+{
+	new ct, t;
+
+	rg_initialize_player_counts( t, ct );
+
+	switch( Team )
+	{
+		case TEAM_CT: return ct;
+		case TEAM_TERRORIST: return t;
+		default: return 0;
+	}
+
+	return 0;
+}
+
+stock PrintCenter(id = 0, const msg[ ] = "", any:...)
+{
+	new szMsg[ 150 ];
+	vformat( szMsg, charsmax( szMsg ), msg, 3 );
+
+	message_begin( ( id == 0 ? MSG_BROADCAST : MSG_ONE_UNRELIABLE ), imTextMsg, _, id );
+	write_byte( 4 );
+	write_string( szMsg );
+	message_end( );
+
+	server_print( szMsg );
+}
