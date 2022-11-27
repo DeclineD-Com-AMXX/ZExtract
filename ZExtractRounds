@@ -104,54 +104,44 @@ CheckRestart( )
 	if ( g_rRestart > Rs_Not )
 		return;
 
-	new cvarStr[ 5 ];
+	new bool: Restarting;
 
-	get_pcvar_string( cvarRestart[ 0 ], cvarStr, charsmax( cvarStr ) );
-
-	if ( contain( cvarStr, "." ) )
+	if ( IsCvarFloat( cvarRestart[ 0 ] ) )
 	{
-		if ( get_pcvar_float( cvarRestart[ 0 ] ) > 0.0 )
-		{
-			#if defined DEBUG
-			server_print( "Server Game Restart" );
-			#endif
-			g_rRestart = Rs_All;
-			OnRoundEnd( );
-		}
+		Restarting = ( get_pcvar_float( cvarRestart[ 0 ] ) > 0.0 );
 	}
-	else {
-		if ( get_pcvar_num( cvarRestart[ 0 ] ) > 0 )
-		{
-			#if defined DEBUG
-			server_print( "Server Game Restart" );
-			#endif
-			g_rRestart = Rs_All;
-			OnRoundEnd( );
-		}
-	}
-
-	get_pcvar_string( cvarRestart[ 1 ], cvarStr, charsmax( cvarStr ) );
-
-	if ( contain( cvarStr, "." ) )
+	else
 	{
-		if ( get_pcvar_float( cvarRestart[ 1 ] ) > 0.0 )
-		{
-			#if defined DEBUG
-			server_print( "Server Round Restart" );
-			#endif
-			g_rRestart = Rs_Round;
-			OnRoundEnd( );
-		}
+		Restarting = ( get_pcvar_num( cvarRestart[ 0 ] ) > 0 );
 	}
-	else {
-		if ( get_pcvar_num( cvarRestart[ 1 ] ) > 0 )
-		{
-			#if defined DEBUG
-			server_print( "Server Round Restart" );
-			#endif
-			g_rRestart = Rs_Round;
-			OnRoundEnd( );
-		}
+
+	if ( Restarting )
+	{
+		#if defined DEBUG
+		server_print( "Server Game Restart" );
+		#endif
+		g_rRestart = Rs_All;
+		OnRoundEnd( );
+
+		return;
+	}
+
+	if ( IsCvarFloat( cvarRestart[ 1 ] ) )
+	{
+		Restarting = ( get_pcvar_float( cvarRestart[ 1 ] ) > 0.0 );
+	}
+	else
+	{
+		Restarting = ( get_pcvar_num( cvarRestart[ 1 ] ) > 0 );
+	}
+
+	if ( Restarting )
+	{
+		#if defined DEBUG
+		server_print( "Server Round Restart" );
+		#endif
+		g_rRestart = Rs_Round;
+		OnRoundEnd( );
 	}
 }
 
@@ -259,12 +249,12 @@ public plugin_init()
 
 public plugin_precache( )
 {
-	
+
 }
 
 public plugin_natives( )
 {
-	
+
 }
 
 
@@ -433,6 +423,18 @@ stock GetPlayers( TeamName: Team )
 	}
 
 	return 0;
+}
+
+stock bool:IsCvarFloat(pcvar)
+{
+	new cvarStr[ 5 ];
+
+	get_pcvar_string( pcvar, cvarStr, charsmax( cvarStr ) );
+
+	if ( contain( cvarStr, "." ) )
+		return true;
+
+	return false;
 }
 
 stock PrintCenter(id = 0, const msg[ ] = "", any:...)
