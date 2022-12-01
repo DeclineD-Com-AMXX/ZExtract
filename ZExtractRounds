@@ -11,6 +11,7 @@
 
 #include <zextract_const>
 
+
 /* ~(Debug)~ */
 //#define DEBUG // Enables Debug
 
@@ -25,13 +26,11 @@
 #define PlayersAlive ( ( GetPlayers( TEAM_CT ) ) && ( GetPlayers( TEAM_TERRORIST ) ) )
 
 new const RoundWinMessages[ WinType ][  ] = {
-	"",
 	"Restarting",
 	"No One Won",
 	"Humans Win",
 	"Zombies Win"
 };
-
 
 /* ~(Cvar)~ */
 #define CvarValueMaxLen CI_Value - CI_Name - CI_Id
@@ -76,6 +75,7 @@ new /*==*/ g_MaxRoundTime,
 	bool: g_bRoundStarted,
 	bool: g_bRoundEnded,
 	bool: g_bWFP,
+	bool: g_bChangeMap,
 
 	RsType: g_rRestart,
 
@@ -213,6 +213,7 @@ Count( Float: flGameTime )
 	}
 }
 
+
 /* ~(plugin_* Functions)~ */
 public plugin_init()
 {
@@ -302,12 +303,12 @@ public OnRoundEnd( )
 
 	g_bRoundEnded = true;
 
-	new WinType: iWin, WinStatus: fWin, ScenarioEventEndRound: WinEvent;
+	new WinType: RoundWin, WinStatus: GameWin, ScenarioEventEndRound: WinEvent;
 
 	if ( g_rRestart > Rs_Not )
 	{
-		iWin = WIN_RESTART;
-		fWin = WINSTATUS_NONE;
+		RoundWin = WIN_RESTART;
+		GameWin = WINSTATUS_NONE;
 		WinEvent = ROUND_GAME_RESTART;
 
 		set_pcvar_num(cvarRestart[ 0 ], 0);
@@ -315,31 +316,36 @@ public OnRoundEnd( )
 	}
 	else if ( ( 0.0 > ( float( g_MaxRoundTime ) - TimePassed ) ) )
 	{
-		iWin = WIN_DRAW;
-		fWin = WINSTATUS_DRAW;
+		RoundWin = WIN_DRAW;
+		GameWin = WINSTATUS_DRAW;
 		WinEvent = ROUND_END_DRAW;
 
 	}
 	else if ( GetPlayers( TEAM_CT ) == 0 )
 	{
-		iWin = WIN_ZOMBIE;
-		fWin = WINSTATUS_TERRORISTS;
+		RoundWin = WIN_ZOMBIE;
+		GameWin = WINSTATUS_TERRORISTS;
 		WinEvent = ROUND_TERRORISTS_WIN;
 	}
 	else if ( GetPlayers( TEAM_TERRORIST ) == 0 )
 	{
-		iWin = WIN_HUMAN;
-		fWin = WINSTATUS_CTS;
+		RoundWin = WIN_HUMAN;
+		GameWin = WINSTATUS_CTS;
 		WinEvent = ROUND_CTS_WIN;
 	}
 
-	rg_round_end(g_iCvars[ PCV_RoundEndDelay ][ CI_flValue ], fWin, WinEvent, RoundWinMessages[ iWin ], "");
+	rg_round_end(g_iCvars[ PCV_RoundEndDelay ][ CI_flValue ], GameWin, WinEvent, RoundWinMessages[ RoundWin ], "");
 }
 
 public OnRoundEnd2( WinStatus: status, ScenarioEventEndRound: event, Float: tmDelay )
 {
-	SetHookChainReturn(ATYPE_BOOL, false);
-	return HC_SUPERCEDE;
+	if( !g_bChangeMap )
+	{
+		SetHookChainReturn(ATYPE_BOOL, false);
+		return HC_SUPERCEDE;
+	}
+
+	return HC_CONTINUE;
 }
 
 // [ Checks ]
@@ -348,29 +354,43 @@ public OnNextFrame( )
 	static Float: flGameTime; 
 	flGameTime = get_gametime( );
 
-	// Resume game if not waiting for players
-	if ( !g_bWFP )
+	// End Game
+	if( g_iRound == g_MaxRounds )
 	{
-		// Functions that will be called in pre-game
-		if ( !g_bRoundStarted && !g_bRoundEnded )
-		{
-			Count( flGameTime );
-		}
-		// Functions that will be called in game
-		else if ( !g_bRoundEnded )
-		{
-			CheckRoundEnd( flGameTime );
-		}
-		// Functions that will be called in post-game
-		else
-		{
+		g_bChangeMap = true;
 
-		}
+		new strMap[40];
+		get_cvar_string( "amx_nextmap", strMap, charsmax( strMap ) );
+
+		server_cmd( "changelevel %s", strMap );
+
+		return;
 	}
+	else {
+		// Resume game if not waiting for players
+		if ( !g_bWFP )
+		{
+			// Functions that will be called in pre-game
+			if ( !g_bRoundStarted && !g_bRoundEnded )
+			{
+				Count( flGameTime );
+			}
+			// Functions that will be called in game
+			else if ( !g_bRoundEnded )
+			{
+				CheckRoundEnd( flGameTime );
+			}
+			// Functions that will be called in post-game
+			else
+			{
 
-	/* Functions that will be called anyway */
-	CheckRestart( );
-	CheckWFP( );
+			}
+		}
+
+		/* Functions that will be called anyway */
+		CheckRestart( );
+		CheckWFP( );
+	}
 
 	/* Keep calling the next frame */
 	NextFrame
