@@ -1,3 +1,4 @@
+```pawn
 /* Require Semicolons */
 #pragma semicolon 1
 
@@ -469,3 +470,4 @@ stock PrintCenter(id = 0, const msg[ ] = "", any:...)
 
 	server_print( szMsg );
 }
+```
