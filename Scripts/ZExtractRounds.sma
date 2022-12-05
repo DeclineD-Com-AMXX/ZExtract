@@ -55,12 +55,25 @@ enum _: plgCvars
 
 new iCvars[ plgCvars ][ cvarInfo ] = 
 {
-	{ 0, "ZExtract_WfpDelay", "3.0",  0.0, 0 },
-	{ 0, "ZExtract_WfpMinPlayers", "2", 0.0, 0 },
-	{ 0, "ZExtract_Rounds", "10", 0.0, 0 },
-	{ 0, "ZExtract_RoundStartDelay", "15.0", 0.0, 0 },
-	{ 0, "ZExtract_RoundEndDelay", "5.0", 0.0, 0 }
+	{ 0, "ZExtract_WfpDelay", "3.0",  3.0, 3 },
+	{ 0, "ZExtract_WfpMinPlayers", "2", 2.0, 2 },
+	{ 0, "ZExtract_Rounds", "10", 10.0, 10 },
+	{ 0, "ZExtract_RoundStartDelay", "15.0", 15.0, 15 },
+	{ 0, "ZExtract_RoundEndDelay", "5.0", 5.0, 5 }
 };
+
+
+/* ~(Forwards)~ */
+enum _:RoundForwards
+{
+	RFWD_RoundStart,
+	RFWD_RoundEndPre,
+	RFWD_RoundEnd,
+	RFWD_RoundWFPEnd,
+	RFWD_RoundStart2
+};
+
+new pForwards[ RoundForwards ];
 
 
 /* ~(Variables)~ */
@@ -133,9 +146,10 @@ bool: CheckRestart(pcvar)
 		server_print( ServerRestart ? "Game Restart" : "Round Restart" );
 		#endif
 		rRestart = ServerRestart ? Rs_All : Rs_Round;
+
 		OnRoundEnd( );
 
-		set_pcvar_num(pcvar, 0);
+		set_pcvar_num( pcvar, 0 );
 
 		return true;
 	}
@@ -192,6 +206,9 @@ CheckWFP( )
 			bJustWFP = true;
 			bWFP = false;
 			rRestart = Rs_All;
+
+			ExecuteForward( pForwards[ RFWD_RoundWFPEnd ], _ );
+
 			OnRoundEnd( );
 		}
 	}
@@ -215,6 +232,7 @@ Count( Float: flGameTime )
 		PrintCenter( _, "Game Starting in %i..", floatround( StartDelay - TimePassed ) );
 }
 
+
 /* ~(plugin_* Functions)~ */
 public plugin_init()
 {
@@ -224,10 +242,10 @@ public plugin_init()
 	// Handle "Round Start/End"
 	register_event( "HLTV", "OnRoundStart2", "a", "1=0", "2=0" );
 	RegisterHookChain( RG_RoundEnd, "OnRoundEnd2" );
+	RegisterHookChain( RG_CSGameRules_OnRoundFreezeEnd, "ReHook_FreezeEnd" );
 
 	// Handle "Map Change"
 	RegisterHookChain( RG_CSGameRules_GoToIntermission, "ReHook_ChangeMap" );
-	RegisterHookChain( RG_CSGameRules_OnRoundFreezeEnd, "ReHook_FreezeEnd" );
 
 	// Register plugin cvars
 	RegisterCvars( );
@@ -258,12 +276,22 @@ public plugin_init()
 
 public plugin_precache( )
 {
-
+	pForwards[ RFWD_RoundEnd ] = CreateMultiForward( "ZER_RoundEnd", ET_CONTINUE, FP_CELL, FP_CELL, FP_CELL, FP_STRING, FP_STRING, FP_CELL );
+	pForwards[ RFWD_RoundEndPre ] = CreateMultiForward( "ZER_RoundEnd_Pre", ET_STOP, FP_CELL, FP_CELL, FP_CELL, FP_STRING, FP_STRING, FP_CELL );
+	pForwards[ RFWD_RoundStart ] = CreateMultiForward( "ZER_RoundStart", ET_CONTINUE );
+	pForwards[ RFWD_RoundStart2 ] = CreateMultiForward( "ZER_RoundStart2", ET_CONTINUE );
+	pForwards[ RFWD_RoundWFPEnd ] = CreateMultiForward( "ZER_WaitForPlayersEnd", ET_CONTINUE );
 }
 
 public plugin_natives( )
 {
-
+	register_native("zer_round_end", "native_end");
+	register_native("zer_round_ended", "native_ended");
+	register_native("zer_round_started", "native_started");
+	register_native("zer_round_starting", "native_starting");
+	register_native("zer_waiting_for_players", "native_wfp");
+	register_native("zer_is_change_map", "native_is_cm");
+	register_native("zer_can_change_map", "native_can_cm");
 }
 
 public plugin_cfg( )
@@ -293,6 +321,8 @@ public RoundTime(pcvar, oldValue[], newValue[])
 
 public OnRoundStart( )
 {
+	ExecuteForward( pForwards[ RFWD_RoundStart2 ], _ );
+
 	bRoundStarted = true;
 }
 
@@ -312,6 +342,8 @@ public OnRoundStart2( )
 
 	if ( bJustWFP )
 		bJustWFP = false;
+
+	ExecuteForward( pForwards[ RFWD_RoundStart ], _ );
 
 	rRestart = Rs_Not;
 	bRoundEnded = false;
@@ -348,8 +380,8 @@ public OnRoundEnd( )
 		GameWin = WINSTATUS_NONE;
 		WinEvent = ROUND_GAME_RESTART;
 
-		set_pcvar_num(cvarRestart[ 0 ], 0);
-		set_pcvar_num(cvarRestart[ 1 ], 0);
+		set_pcvar_num( cvarRestart[ 0 ], 0 );
+		set_pcvar_num( cvarRestart[ 1 ], 0 );
 	}
 	else if ( GetPlayers( TEAM_CT ) == 0 )
 	{
@@ -411,6 +443,120 @@ public ReHook_ChangeMap( )
 public ReHook_FreezeEnd( )
 {
 	SetRoundTimer( iMaxRoundTime - iFreezeTime );
+}
+
+
+
+/* ~(Natives)~ */
+// Float: flDelay = 5.0, WinType: Win = WIN_NONE, RsType: Restart, 
+public native_end(plgId, paramnum)
+{
+	if ( paramnum < 6 )
+		return;
+
+	new Float: flDelay = get_param_f( 1 ),
+		WinType: reWin = WinType: get_param( 2 ),
+		RsType: reRestartType = RsType: get_param( 3 ),
+		WinStatus: reWinStatus = WINSTATUS_NONE,
+		ScenarioEventEndRound: reScenarioEvent = ROUND_NONE,
+		endMsg[ 20 ],
+		endSound[ 20 ],
+		bool: trigger = bool: get_param( 6 );
+
+	if ( reWin > WinType - WinType: 1 )
+	{
+		log_error( AMX_ERR_NATIVE, "zer_round_end: win argument 2 is unrecognized" );
+		return;
+	}
+
+	get_string( 4, endMsg, charsmax( endMsg ) );
+	get_string( 5, endSound, charsmax( endSound ) );
+
+	if ( equal( endMsg, "default" ) )
+		copy( endMsg, charsmax( endMsg ), reWin >= WinType: 0 ? RoundWinMessages[ reWin ] : "" );
+
+	if ( equal( endSound, "default" ) )
+		copy( endSound, charsmax( endSound ), reWin >= WinType: 0 ? "" : "" );
+
+	switch ( reWin )
+	{
+		case WIN_RESTART:
+		{
+			reWinStatus = WINSTATUS_NONE;
+			reScenarioEvent = ROUND_GAME_RESTART;
+		}
+
+		case WIN_ZOMBIE:
+		{
+			reWinStatus = WINSTATUS_TERRORISTS;
+			reScenarioEvent = ROUND_TERRORISTS_WIN;
+		}
+
+		case WIN_HUMAN:
+		{
+			reWinStatus = WINSTATUS_CTS;
+			reScenarioEvent = ROUND_CTS_WIN;
+		}
+
+		case WIN_DRAW:
+		{
+			reWinStatus = WINSTATUS_DRAW;
+			reScenarioEvent = ROUND_END_DRAW;
+		}
+	}
+
+	new endMsgHandle = PrepareArray( endMsg, charsmax( endMsg ) ),
+		endSoundHandle = PrepareArray( endSound, charsmax( endSound ) );
+
+	if ( trigger )
+	{
+		ExecuteForward( pForwards[ RFWD_RoundEndPre ], _, flDelay, reWin, endMsgHandle, endSoundHandle );
+
+		if ( reWin == WIN_RESTART )
+			rRestart = reRestartType;
+	}
+
+	bRoundEnded = true;
+
+	rg_round_end( flDelay, reWinStatus, reScenarioEvent, endMsg, endSound);
+
+	if ( trigger )
+		ExecuteForward( pForwards[ RFWD_RoundEnd ], _, flDelay, reWin, endMsgHandle, endSoundHandle );
+}
+
+public native_ended(plgId, paramnum)
+{
+	return bRoundEnded;
+}
+
+public native_started(plgId, paramnum)
+{
+	return bRoundStarted;
+}
+
+public native_starting(plgId, paramnum)
+{
+	return ( !bRoundEnded && !bRoundStarted );
+}
+
+public native_wfp(plgId, paramnum)
+{
+	return bWFP;
+}
+
+public native_is_cm(plgId, paramnum)
+{
+	return bChangeMap;
+}
+
+public native_can_cm(plgId, paramnum)
+{
+	if ( paramnum < 1 )
+		return;
+
+	new iValue = get_param( 1 );
+
+	bChangeMap = bool: iValue;
 }
 
 
