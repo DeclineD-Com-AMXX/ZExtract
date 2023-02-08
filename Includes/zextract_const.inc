@@ -1,23 +1,12 @@
-/* Sublime AMXX Editor v3.0.0-beta */
-
 #if defined _zextract_const_included
 	#endinput
 #endif
 #define _zextract_const_included
 
-/* ~(Restart)~ */
-enum RsType
-{
-	Rs_Not,
-	Rs_Round,
-	Rs_All
-}
+#define ZEXRet_Handled 80
+#define ZEXRet_Supercede 81
+#define ZEXRet_Continue 79
 
-enum WinType
-{
-	WIN_NONE = -1,
-	WIN_RESTART,
-	WIN_DRAW,
-	WIN_HUMAN,
-	WIN_ZOMBIE
-}
+#define is_bit(%1,%0)		(%1 & (1<<%0))
+#define set_bit(%1,%0) 		%1 |= (1<<%0)
+#define remove_bit(%1,%0) 	%1 &= ~(1<<%0)
